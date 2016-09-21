@@ -9,8 +9,17 @@
  * make this explicit. "docker" would be any node with docker installed.
  */
 
+/*
+ * Plugins required:
+ *  - Pipeline
+ *  - CloudBees Docker Pipeline
+ *  - Timestamper
+ */
+
 // TEST FLAG - to make it easier to turn on/off unit tests for speeding up access to later stuff.
-def runTests = true
+def runTests = false
+/* Branch from jenkinsci/packaging to use for the packaging stages */
+String packagingBranch = 'master'
 
 // Only keep the 10 most recent builds.
 properties([[$class: 'jenkins.model.BuildDiscarderProperty', strategy: [$class: 'LogRotator',
@@ -44,14 +53,50 @@ node('java') {
 
         // Once we've built, archive the artifacts and the test results.
         stage('Archive Artifacts / Test Results') {
-            archiveArtifacts artifacts: '**/target/*.jar, **/target/*.war, **/target/*.hpi',
-                        fingerprint: true
+            /* Stash jenkins.war for later packaging preparations */
+            stash includes: '**/target/*.war', name: 'warfile'
+            // UNCOMMENT: commented out to avoid the transit hit during testing
+            //archiveArtifacts artifacts: '**/target/*.jar, **/target/*.war, **/target/*.hpi',
+            //            fingerprint: true
             if (runTests) {
                 junit healthScaleFactor: 20.0, testResults: '**/target/surefire-reports/*.xml'
             }
         }
     }
 }
+
+node('docker') {
+    timestamps {
+        def image
+
+        dir('packaging') {
+            git branch: packagingBranch, url: 'https://github.com/jenkinsci/packaging.git'
+
+            stage('Packaging - Preparation') {
+                /* Build the image using the Dockerfile in the docker/
+                 * directory
+                 */
+                image = docker.build("jenkinsci/packaging-builder:0.1", 'docker')
+            }
+
+            stage('Packaging - Build') {
+                unstash 'warfile'
+                image.inside {
+                    withEnv([
+                        'BRANCH=./branding/jenkins.mk',
+                        'BUILDENV=./env/test.mk',
+                        'CREDENTIAL=./credentials/test.mk',
+                        'WAR=jenkins.war',
+                    ]) {
+                        sh 'make clean deb rpm suse'
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 
 // This method sets up the Maven and JDK tools, puts them in the environment along
 // with whatever other arbitrary environment variables we passed in, and runs the
