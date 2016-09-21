@@ -86,7 +86,7 @@ node('docker') {
                         'BRANCH=./branding/jenkins.mk',
                         'BUILDENV=./env/test.mk',
                         'CREDENTIAL=./credentials/test.mk',
-                        'WAR=jenkins.war',
+                        "WAR=${findFiles(glob: 'jenkins.war')[0]?.name}",
                     ]) {
                         sh 'make clean deb rpm suse'
                     }
